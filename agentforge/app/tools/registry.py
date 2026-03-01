@@ -6,10 +6,18 @@ This registry imports them all and provides them to the LangGraph agent.
 
 from langchain_core.tools import BaseTool
 
+from app.tools.allergy_checker import allergy_check
 from app.tools.appointment_availability import appointment_availability
+from app.tools.care_gap_analysis import care_gap_analysis, update_care_gap
+from app.tools.clinical_trials import clinical_trials_search
+from app.tools.insurance_coverage import insurance_coverage_check
+from app.tools.lab_results import lab_results_analysis
 from app.tools.drug_interaction import drug_interaction_check
+from app.tools.drug_recall import drug_recall_check
+from app.tools.fda_drug_safety import fda_drug_safety
 from app.tools.patient_summary import patient_summary
 from app.tools.provider_search import provider_search
+from app.tools.record_vitals import record_vitals
 from app.tools.symptom_lookup import symptom_lookup
 
 
@@ -21,5 +29,14 @@ def get_all_tools() -> list[BaseTool]:
         symptom_lookup,
         provider_search,
         appointment_availability,
+        fda_drug_safety,
+        record_vitals,
+        clinical_trials_search,
+        allergy_check,
+        drug_recall_check,
+        care_gap_analysis,
+        update_care_gap,
+        insurance_coverage_check,
+        lab_results_analysis,
     ]
     return tools

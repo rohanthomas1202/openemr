@@ -1,75 +1,258 @@
-# AgentForge AI Healthcare Assistant for OpenEMR
+# AgentForge Healthcare
 
-An AI-powered clinical assistant that integrates with OpenEMR's FHIR API to provide intelligent healthcare support.
+An AI-powered healthcare assistant built on [OpenEMR](https://www.open-emr.org/), the open-source Electronic Health Records system. Uses a LangGraph agent with 14 specialized tools to query real patient data via FHIR R4 APIs and custom MariaDB tables, with a 3-layer verification pipeline to ensure safe, grounded responses.
 
-## Features
+**Live Demo:** [http://54.236.183.203](http://54.236.183.203/)
 
-- **Patient Summaries** — Aggregates demographics, conditions, medications, allergies, immunizations, and lab results from FHIR
-- **Drug Interaction Checking** — Cross-references medications against a clinically-curated interaction database with severity levels
-- **Symptom Analysis** — Maps symptoms to potential conditions with ICD-10 codes, urgency levels, and red flags
-- **Provider Search** — Find practitioners by name or specialty using NUCC taxonomy codes
-- **Appointment Availability** — Check provider schedules and available time slots
-- **3-Layer Verification** — Drug safety verification, confidence scoring (0.0–1.0), and hallucination detection
-- **Observability** — Token usage tracking, latency metrics, and user feedback collection
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Agent architecture, tools, verification pipeline, deployment |
+| [COST_ANALYSIS.md](COST_ANALYSIS.md) | AI cost breakdown, production projections, optimization strategies |
+| [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | 5-minute demo walkthrough script |
+| [BOUNTY.md](BOUNTY.md) | Bounty features: FDA safety, care gaps, insurance, lab results |
+| [Eval Dataset](https://github.com/rohanthomas1202/healthcare-agent-eval) | Open source eval dataset (92 cases, MIT license) |
+| [OpenEMR Integration](https://github.com/rohanthomas1202/openemr/tree/master/agentforge) | Agent integrated into OpenEMR fork |
+
+## Evaluation Results
+
+**92 test cases** across 4 categories covering all 14 tools:
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| Happy path | 35+ | Core tool functionality across all tools |
+| Edge case | 15+ | Missing data, unknown inputs, boundary conditions |
+| Adversarial | 11 | Prompt injection, unsafe queries, role overrides |
+| Multi-step | 15+ | Complex reasoning chains across multiple tools |
 
 ## Architecture
 
-- **Backend**: Python/FastAPI with LangGraph agent state machine
-- **Frontend**: Streamlit chat UI with verification metadata display
-- **LLM**: Claude Sonnet 4 (primary) with GPT-4o fallback
-- **Data**: OpenEMR FHIR R4 API with OAuth2 authentication
-
-## Quick Start
-
-### With Docker Compose (Recommended)
-
-From the `openemr/docker/development-easy/` directory:
-
-```bash
-docker-compose -f docker-compose.yml -f docker-compose.agentforge.yml up
+```
+User (Streamlit Chat UI)
+        |
+   nginx reverse proxy (:8080)
+        |
+   FastAPI backend (:8000)
+        |
+   LangGraph Agent (Claude / GPT-4)
+        |
+   14 Specialized Tools:
+   ├── Patient Summary, Drug Interactions, Symptoms, Providers, Appointments
+   ├── FDA Safety, Drug Recalls, Clinical Trials, Allergy Check, Vitals
+   └── Care Gaps, Insurance Coverage, Lab Results, Update Care Gap
+        |
+   +--- OpenEMR FHIR R4 API ---+--- Custom MariaDB Tables ---+
+        (OAuth2 authenticated)     (care gaps, insurance, labs)
+        |
+   Verification Pipeline
+   ├── Drug Safety (contradiction detection)
+   ├── Confidence Scoring (0.0-1.0)
+   └── Claim Verification (hallucination detection)
+        |
+   Response + metadata → User
 ```
 
-This starts OpenEMR + the AI Assistant on port 8080.
+### Agent Loop
 
-### Standalone
+1. User sends a natural language query
+2. LLM decides which tool(s) to call (supports multi-step reasoning chains)
+3. Tools execute against OpenEMR's FHIR R4 API with OAuth2 authentication
+4. LLM synthesizes tool results into a coherent response
+5. Verification pipeline checks the response for drug safety, confidence, and grounding
+6. Response is returned with confidence score, disclaimers, and verification metadata
+
+## Tools (14)
+
+| Tool | Description |
+|------|-------------|
+| `patient_summary` | Retrieves demographics, conditions, medications, allergies, immunizations |
+| `drug_interaction_check` | Checks medications against ~50 known interaction pairs with severity |
+| `symptom_lookup` | Maps symptoms to 70+ conditions with triage urgency levels |
+| `provider_search` | Searches practitioners by name or specialty via FHIR |
+| `appointment_availability` | Queries appointment slots for a provider |
+| `fda_drug_safety` | FDA boxed warnings, contraindications, FAERS adverse events |
+| `record_vitals` | Records BP, heart rate, temperature, weight into OpenEMR |
+| `clinical_trials_search` | Searches ClinicalTrials.gov for recruiting studies |
+| `allergy_check` | Drug-allergy cross-reactivity detection |
+| `drug_recall_check` | FDA recall alerts for medications |
+| `care_gap_analysis` | USPSTF preventive screening gap tracker (15 protocols) |
+| `update_care_gap` | Mark screenings as completed, declined, or reset |
+| `insurance_coverage_check` | Formulary tier, copay, prior auth, generic alternatives |
+| `lab_results_analysis` | Lab trends, reference ranges, critical value flagging |
+
+## Verification Systems
+
+1. **Drug Safety Verifier** -- Scans the agent's response and tool outputs for dangerous drug combinations. Flags contradictions where the agent recommends medications that interact.
+
+2. **Confidence Scorer** -- Assigns a 0.0-1.0 confidence score based on: number of tools called, data completeness, response specificity, and whether claims are grounded in tool outputs.
+
+3. **Claim Verifier** -- Extracts factual claims from the response and checks each one against the raw tool outputs. Calculates a grounding rate and flags ungrounded (hallucinated) claims.
+
+All three run via `run_verification_pipeline()` on every response before it reaches the user.
+
+## Tech Stack
+
+- **Agent Framework:** LangGraph (state machine-based reasoning loop)
+- **LLM:** Claude Sonnet 4 (primary), GPT-4o (fallback)
+- **Backend:** Python 3.11, FastAPI, uvicorn
+- **Frontend:** Streamlit
+- **EHR System:** OpenEMR (FHIR R4 API with OAuth2)
+- **Observability:** LangSmith + custom metrics (token tracking, latency, feedback)
+- **Deployment:** AWS Lightsail (Docker Compose: MariaDB + OpenEMR + AgentForge)
+- **Evaluation:** 92 test cases, pytest-parametrized
+
+## Project Structure
+
+```
+agentforge-healthcare/
+├── app/
+│   ├── main.py                  # FastAPI entry point
+│   ├── config.py                # Settings from env vars
+│   ├── fhir_client.py           # FHIR client with OAuth2 token management
+│   ├── mock_fhir_client.py      # Mock client for deployed demo
+│   ├── mock_data.py             # 10 synthetic patients (FHIR format)
+│   ├── agent/
+│   │   ├── graph.py             # LangGraph state machine
+│   │   └── state.py             # Agent state definition
+│   ├── api/
+│   │   └── routes.py            # /api/health, /api/chat endpoints
+│   ├── openemr_db.py              # Async MariaDB connection pool
+│   ├── tools/
+│   │   ├── registry.py            # Tool registry (14 tools)
+│   │   ├── patient_summary.py
+│   │   ├── drug_interaction.py
+│   │   ├── symptom_lookup.py
+│   │   ├── provider_search.py
+│   │   ├── appointment_availability.py
+│   │   ├── fda_drug_safety.py
+│   │   ├── record_vitals.py
+│   │   ├── clinical_trials.py
+│   │   ├── allergy_checker.py
+│   │   ├── drug_recall.py
+│   │   ├── care_gap_analysis.py
+│   │   ├── insurance_coverage.py
+│   │   ├── lab_results.py
+│   │   ├── drug_interactions_db.py   # ~50 interaction pairs
+│   │   ├── symptom_conditions_db.py  # 18 symptoms, 70+ conditions
+│   │   └── fhir_helpers.py           # FHIR resource parsers
+│   └── verification/
+│       ├── pipeline.py          # Orchestrator
+│       ├── drug_safety.py       # Drug interaction contradiction detection
+│       ├── confidence.py        # 0.0-1.0 confidence scoring
+│       └── claim_verifier.py    # Hallucination detection via grounding
+├── frontend/
+│   ├── app.py                   # Streamlit chat UI
+│   └── api_client.py            # HTTP client for backend
+├── evals/
+│   ├── test_cases.json          # 92 test cases
+│   ├── results.json             # Evaluation results
+│   ├── test_eval.py             # Test runner
+│   └── helpers.py               # Eval utilities
+├── deploy/
+│   ├── nginx.conf               # Reverse proxy config
+│   ├── supervisord.conf         # Process manager
+│   └── start.sh                 # Container entry point
+├── Dockerfile
+├── railway.toml
+└── requirements.txt
+```
+
+## Local Development
+
+### Prerequisites
+
+- Python 3.9+
+- OpenEMR Docker instance running on `localhost:9300`
+- Anthropic API key (and/or OpenAI API key)
+
+### Setup
 
 ```bash
-cd agentforge
+# Clone the repo
+git clone https://github.com/rohanthomas1202/agentforge-healthcare.git
+cd agentforge-healthcare
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 
-# Set environment variables (see .env.example)
-export ANTHROPIC_API_KEY=your_key
-export OPENEMR_BASE_URL=https://localhost:9300
+# Configure environment
+cp .env.example .env
+# Edit .env with your API keys and OpenEMR credentials
+```
 
-# Start backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+### Environment Variables
 
-# Start frontend (separate terminal)
+```env
+# LLM
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+
+# OpenEMR FHIR API
+OPENEMR_BASE_URL=https://localhost:9300
+OPENEMR_FHIR_URL=https://localhost:9300/apis/default/fhir
+OPENEMR_TOKEN_URL=https://localhost:9300/oauth2/default/token
+OPENEMR_CLIENT_ID=your-client-id
+OPENEMR_CLIENT_SECRET=your-client-secret
+OPENEMR_USERNAME=admin
+OPENEMR_PASSWORD=pass
+
+# Mock mode (no OpenEMR needed)
+USE_MOCK_DATA=true
+
+# Observability
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=ls__...
+LANGCHAIN_PROJECT=agentforge-healthcare
+```
+
+### Running
+
+```bash
+# Start the backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Start the frontend (separate terminal)
 streamlit run frontend/app.py --server.port 8501
 ```
 
-## OpenEMR Integration
+### Seed Data (for real OpenEMR)
 
-This agent is integrated into OpenEMR as a custom module (`oe-module-agentforge`). Once enabled, it adds an "AI Assistant" menu item under Modules that loads the chat UI in an iframe.
-
-### Module Location
-```
-openemr/interface/modules/custom_modules/oe-module-agentforge/
+```bash
+python scripts/seed_data.py
+python scripts/seed_providers_appointments.py
 ```
 
 ## Evaluation
 
-57 test cases across 4 categories with 100% pass rate:
-- Happy path (25 cases)
-- Edge cases (15 cases)
-- Adversarial (10 cases)
-- Multi-step reasoning (7 cases)
+92 test cases across 4 categories covering all 14 tools:
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| Happy path | 35+ | Standard queries across all tools |
+| Edge cases | 15+ | Boundary conditions, missing data, unknown inputs |
+| Adversarial | 11 | Prompt injection, unsafe queries, role overrides |
+| Multi-step | 15+ | Complex reasoning chains across multiple tools |
 
 Run evals:
+
 ```bash
-python -m pytest evals/ -v --tb=short
+python evals/test_eval.py
 ```
 
 ## Deployment
 
-Deployed on Railway with nginx reverse proxy serving both FastAPI (port 8000) and Streamlit (port 8501) behind a single port (8080).
+The app deploys on AWS Lightsail as a 3-container Docker Compose stack:
+- **MariaDB** — OpenEMR database
+- **OpenEMR** — FHIR R4 API server (internal only, port 443)
+- **AgentForge** — FastAPI + Streamlit + nginx (exposed on port 80)
+
+The AgentForge container uses nginx to reverse-proxy to FastAPI (:8000) and Streamlit (:8501). OpenEMR communicates with the agent via Docker internal DNS (`https://openemr`).
+
+## License
+
+MIT
